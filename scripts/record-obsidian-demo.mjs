@@ -89,7 +89,7 @@ await evaluate(`(async () => {
 	if (!app.plugins.plugins['page-tree']) await app.plugins.enablePluginAndSave('page-tree');
 	app.workspace.rightSplit?.collapse?.();
 	app.workspace.leftSplit?.expand?.();
-	app.commands.executeCommandById('page-tree:open-page-tree');
+	app.commands.executeCommandById('page-tree:open');
 	const file = app.vault.getAbstractFileByPath('PageTree Demo.md');
 	if (!file) throw new Error('Demo root page is missing.');
 	await app.workspace.getLeaf(false).openFile(file);
@@ -215,11 +215,11 @@ try {
 	await hold(2400);
 
 	await setCaption("12 / 13  Reload the page tree from disk and validate its structure");
-	await executeCommand("page-tree:reload-page-tree");
+	await executeCommand("page-tree:reload");
 	await hold(2800);
 
 	await setCaption("13 / 13  Validate the page tree and confirm its structure is healthy");
-	await executeCommand("page-tree:validate-page-tree");
+	await executeCommand("page-tree:validate");
 	await hold(3000);
 
 	await setCaption("PageTree complete demo: all 13 actions finished");
@@ -451,7 +451,7 @@ async function cleanupDemoFixture(initialData) {
 			await app.vault.adapter.write(dataPath, JSON.stringify(initialData, null, 2));
 		}
 		await app.plugins.enablePluginAndSave('page-tree');
-		app.commands.executeCommandById('page-tree:open-page-tree');
+		app.commands.executeCommandById('page-tree:open');
 	})()`);
 }
 

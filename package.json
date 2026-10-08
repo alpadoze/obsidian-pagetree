@@ -1,6 +1,6 @@
 {
 	"name": "page-tree",
-	"version": "0.3.6",
+	"version": "0.3.7",
 	"private": true,
 	"description": "A local-first physical page tree for Obsidian.",
 	"author": "alpadoze",
@@ -10,14 +10,17 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"package": "npm test && npm run build && node scripts/package-release.mjs",
+		"lint": "eslint src --max-warnings 0",
+		"package": "npm run lint && npm test && npm run build && node scripts/package-release.mjs",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
 	"devDependencies": {
 		"@types/node": "^22.15.17",
 		"esbuild": "0.25.5",
-		"obsidian": "latest",
+		"eslint": "9.39.5",
+		"eslint-plugin-obsidianmd": "0.4.2",
+		"obsidian": "1.8.7",
 		"typescript": "^5.8.3",
 		"vitest": "^4.1.11"
 	}

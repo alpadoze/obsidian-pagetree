@@ -66,9 +66,9 @@ export function canonicalVaultPath(path: string): string {
 }
 
 export function generateNodeId(): NodeId {
-	if (typeof globalThis.crypto?.randomUUID !== "function") {
+	if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
 		throw new Error("This environment does not provide crypto.randomUUID().");
 	}
 
-	return globalThis.crypto.randomUUID();
+	return crypto.randomUUID();
 }

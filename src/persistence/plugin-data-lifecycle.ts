@@ -7,7 +7,7 @@ interface PersistenceScope {
 
 // Symbol.for survives unloading/requiring a plugin bundle in the same host window.
 const scopesKey = Symbol.for("page-tree:data-persistence-scopes");
-const host = globalThis as typeof globalThis & { [scopesKey]?: WeakMap<object, PersistenceScope> };
+const host = window as Window & { [scopesKey]?: WeakMap<object, PersistenceScope> };
 const scopes = host[scopesKey] ??= new WeakMap<object, PersistenceScope>();
 
 /** A reloaded plugin waits for a started save and cancels stale, not-yet-started writes. */

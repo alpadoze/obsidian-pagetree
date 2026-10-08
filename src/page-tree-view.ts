@@ -464,7 +464,6 @@ export class PageTreeView extends ItemView {
 		menu.addItem((item) => item
 			.setTitle(this.strings.deletion.menu)
 			.setIcon("trash-2")
-			.setWarning(true)
 			.onClick(() => this.openDeleteModal(file, hasChildren)));
 		return menu;
 	}
@@ -516,12 +515,13 @@ export class PageTreeView extends ItemView {
 		resolvePath: PageReferencePathResolver,
 	): Promise<void> {
 		try {
-			if (navigator.clipboard === undefined) throw new Error("Clipboard API is unavailable");
+			const clipboard = this.contentEl.win.navigator.clipboard;
+			if (clipboard === undefined) throw new Error("Clipboard API is unavailable");
 			const text = formatPageReference(pagePath, scope, resolvePath, {
 				rootPage: this.strings.copy.rootPage,
 				childPages: this.strings.copy.childPages,
 			});
-			await navigator.clipboard.writeText(text);
+			await clipboard.writeText(text);
 			new Notice(
 				scope === "page"
 					? this.strings.copy.pageCopied
@@ -582,7 +582,7 @@ export class PageTreeView extends ItemView {
 			this.contentEl.addClass("is-dragging-page");
 			this.contentEl.querySelector<HTMLElement>(".page-tree-root-drop-zone")
 				?.setAttribute("aria-hidden", "false");
-			requestAnimationFrame(() => wrapper.addClass("is-dragging"));
+			wrapper.win.requestAnimationFrame(() => wrapper.addClass("is-dragging"));
 		});
 
 		wrapper.addEventListener("dragover", (event) => {
@@ -603,7 +603,7 @@ export class PageTreeView extends ItemView {
 		});
 
 		wrapper.addEventListener("dragleave", (event) => {
-			if (event.relatedTarget instanceof Node && wrapper.contains(event.relatedTarget)) return;
+			if (isDomNode(event.relatedTarget) && wrapper.contains(event.relatedTarget)) return;
 			wrapper.removeClass("is-drop-target", "is-drop-before", "is-drop-after");
 		});
 
@@ -651,7 +651,7 @@ export class PageTreeView extends ItemView {
 			dropZone.addClass("is-drop-target");
 		});
 		dropZone.addEventListener("dragleave", (event) => {
-			if (event.relatedTarget instanceof Node && dropZone.contains(event.relatedTarget)) return;
+			if (isDomNode(event.relatedTarget) && dropZone.contains(event.relatedTarget)) return;
 			dropZone.removeClass("is-drop-target");
 		});
 		dropZone.addEventListener("drop", (event) => {
@@ -698,6 +698,11 @@ export class PageTreeView extends ItemView {
 }
 
 type PageDropPosition = "before" | "inside" | "after";
+
+function isDomNode(target: EventTarget | null): target is Node {
+	const node: (EventTarget & Partial<Node>) | null = target;
+	return node?.instanceOf?.(Node) === true;
+}
 
 function resolvePageDropPosition(event: DragEvent, wrapper: HTMLElement): PageDropPosition {
 	const bounds = wrapper.getBoundingClientRect();

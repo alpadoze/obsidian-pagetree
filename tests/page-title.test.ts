@@ -24,4 +24,15 @@ describe("pageTitleToPath", () => {
 	])("rejects unsafe cross-platform page title %s", (title, code) => {
 		expect(pageTitleToPath(title)).toEqual({ valid: false, code });
 	});
+
+	it("rejects every embedded ASCII control character while retaining Unicode titles", () => {
+		for (let code = 0; code < 32; code += 1) {
+			expect(pageTitleToPath(`Page${String.fromCharCode(code)}title`)).toEqual({
+				valid: false, code: "invalid-character",
+			});
+		}
+		expect(pageTitleToPath("旅行准备 🌳")).toEqual({
+			valid: true, title: "旅行准备 🌳", path: "旅行准备 🌳.md",
+		});
+	});
 });

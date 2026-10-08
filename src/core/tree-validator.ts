@@ -51,7 +51,7 @@ export function validateTreeState(state: TreeState): TreeValidationResult {
 	if (state.schemaVersion !== CURRENT_TREE_SCHEMA_VERSION) {
 		issues.push({
 			code: "unsupported-schema-version",
-			message: `Expected schema version ${CURRENT_TREE_SCHEMA_VERSION}, received ${state.schemaVersion}.`,
+			message: `Expected schema version ${String(CURRENT_TREE_SCHEMA_VERSION)}, received ${String(state.schemaVersion)}.`,
 		});
 	}
 

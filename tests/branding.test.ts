@@ -26,7 +26,7 @@ describe("PageTree identity", () => {
 		const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 		const view = readFileSync(new URL("../src/page-tree-view.ts", import.meta.url), "utf8");
 		const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
-		for (const command of ["open-page-tree", "reload-page-tree", "validate-page-tree"]) {
+		for (const command of ["open", "reload", "validate"]) {
 			expect(main).toContain(`id: "${command}"`);
 		}
 		expect(view).toContain('VIEW_TYPE_PAGE_TREE = "page-tree-view"');

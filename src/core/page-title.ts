@@ -19,7 +19,7 @@ export interface InvalidPageTitle {
 export type PageTitleResult = ValidPageTitle | InvalidPageTitle;
 
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-const INVALID_FILE_CHARACTER = /[<>:"/\\|?*\u0000-\u001F]/;
+const INVALID_FILE_CHARACTER = /[<>:"/\\|?*]/;
 
 export function pageTitleToPath(input: string): PageTitleResult {
 	let title = input.trim().normalize("NFC");
@@ -27,7 +27,9 @@ export function pageTitleToPath(input: string): PageTitleResult {
 
 	if (title.length === 0) return { valid: false, code: "empty" };
 	if (title.length > 180) return { valid: false, code: "too-long" };
-	if (INVALID_FILE_CHARACTER.test(title)) return { valid: false, code: "invalid-character" };
+	if (INVALID_FILE_CHARACTER.test(title) || [...title].some((character) => character.charCodeAt(0) < 32)) {
+		return { valid: false, code: "invalid-character" };
+	}
 	if (title.endsWith(".") || title.endsWith(" ")) return { valid: false, code: "trailing-character" };
 	if (WINDOWS_RESERVED_NAME.test(title)) return { valid: false, code: "reserved-name" };
 

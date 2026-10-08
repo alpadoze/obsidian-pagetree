@@ -100,7 +100,7 @@ export class TreeStore {
 				path: input.path,
 				order: Number.MAX_SAFE_INTEGER,
 			};
-			const parentId = getParentNodeId(candidate, candidate.nodes[nodeId]!);
+			const parentId = getParentNodeId(candidate, candidate.nodes[nodeId]);
 			const siblingIds = getSiblingIds(candidate, parentId).filter((id) => id !== nodeId);
 			const insertionIndex = resolveInsertionIndex(input.index, siblingIds.length);
 			siblingIds.splice(insertionIndex, 0, nodeId);

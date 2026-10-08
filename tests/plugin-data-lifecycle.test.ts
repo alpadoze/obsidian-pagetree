@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { guardPluginDataStorage } from "../src/persistence/plugin-data-lifecycle";
+
+vi.hoisted(() => { vi.stubGlobal("window", {}); });
+afterAll(() => { vi.unstubAllGlobals(); });
 
 describe("plugin data lifecycle", () => {
 	it("rejects writes and loads after unload", async () => {
@@ -43,5 +46,34 @@ describe("plugin data lifecycle", () => {
 		const first = guardPluginDataStorage({}, storage, () => true);
 		guardPluginDataStorage({}, storage, () => true);
 		expect(await first.loadData()).toBe("ok");
+	});
+
+	it("serializes writes and rejects stale work across a plugin module reload", async () => {
+		const context = {};
+		let finish!: () => void;
+		const held = new Promise<void>((resolve) => { finish = resolve; });
+		let value: unknown = "initial";
+		const storage = {
+			async loadData() { return value; },
+			async saveData(data: unknown) { await held; value = data; },
+		};
+		const old = guardPluginDataStorage(context, storage, () => true);
+		const started = old.saveData("saved");
+		await Promise.resolve();
+		const stale = old.saveData("stale");
+		const staleRejected = expect(stale).rejects.toThrow("no longer active");
+
+		vi.resetModules();
+		const reloaded = await import("../src/persistence/plugin-data-lifecycle");
+		const fresh = reloaded.guardPluginDataStorage(context, storage, () => true);
+		let loaded = false;
+		const loading = fresh.loadData().then((data) => { loaded = true; return data; });
+		await Promise.resolve();
+		expect(loaded).toBe(false);
+		finish();
+		await started;
+		await staleRejected;
+		expect(await loading).toBe("saved");
+		expect(value).toBe("saved");
 	});
 });

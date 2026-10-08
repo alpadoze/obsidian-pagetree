@@ -1,7 +1,6 @@
 import {
 	getLanguage,
 	Notice,
-	Platform,
 	Plugin,
 	TFile,
 	TFolder,
@@ -90,8 +89,8 @@ export default class PageTreePlugin extends Plugin {
 		const loadResult = await this.treeRepository.load();
 		this.applyLoadResult(loadResult);
 		this.localViewState = new LocalViewState({
-			load: () => this.app.loadLocalStorage(LOCAL_VIEW_STATE_KEY),
-			loadLegacy: () => this.app.loadLocalStorage(LEGACY_LOCAL_VIEW_STATE_KEY),
+			load: (): unknown => this.app.loadLocalStorage(LOCAL_VIEW_STATE_KEY),
+			loadLegacy: (): unknown => this.app.loadLocalStorage(LEGACY_LOCAL_VIEW_STATE_KEY),
 			save: (value) => this.app.saveLocalStorage(LOCAL_VIEW_STATE_KEY, value),
 		}, loadResult.state);
 		if (this.localViewState.loadError !== undefined) {
@@ -123,7 +122,7 @@ export default class PageTreePlugin extends Plugin {
 			trash: async (path) => {
 				const entry = this.app.vault.getAbstractFileByPath(path);
 				if (entry === null) throw new Error(`Missing trash target: ${path}`);
-				await this.app.vault.trash(entry, Platform.isDesktopApp);
+				await this.app.fileManager.trashFile(entry);
 			},
 		};
 		this.pageMover = new PhysicalPageMover(physicalPageAdapter);
@@ -233,7 +232,7 @@ export default class PageTreePlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "open-page-tree",
+			id: "open",
 			name: this.strings.commands.open,
 			callback: () => {
 				void this.activateView();
@@ -241,7 +240,7 @@ export default class PageTreePlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "reload-page-tree",
+			id: "reload",
 			name: this.strings.commands.reload,
 			callback: () => {
 				void this.reloadTree();
@@ -249,7 +248,7 @@ export default class PageTreePlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "validate-page-tree",
+			id: "validate",
 			name: this.strings.commands.validate,
 			callback: () => {
 				const validation = validateTreeState(this.treeStore.getState());
@@ -268,7 +267,6 @@ export default class PageTreePlugin extends Plugin {
 		this.unloading = true;
 		this.trackingReady = false;
 		this.pairedRenameSources.clear();
-		this.app.workspace.detachLeavesOfType(VIEW_TYPE_PAGE_TREE);
 	}
 
 	private async activateView(): Promise<void> {
@@ -506,13 +504,13 @@ export default class PageTreePlugin extends Plugin {
 		filePath: string,
 		attemptsRemaining = 20,
 	): void {
-		if (this.app.workspace.getActiveFile()?.path !== filePath) return;
+		if (this.unloading || this.app.workspace.getActiveFile()?.path !== filePath) return;
 		const inlineTitle = leaf.view.containerEl.querySelector<HTMLElement>(".inline-title");
 		if (inlineTitle !== null) {
 			inlineTitle.focus();
-			const selection = window.getSelection();
+			const selection = inlineTitle.win.getSelection();
 			if (selection !== null) {
-				const range = document.createRange();
+				const range = inlineTitle.doc.createRange();
 				range.selectNodeContents(inlineTitle);
 				selection.removeAllRanges();
 				selection.addRange(range);
@@ -520,7 +518,7 @@ export default class PageTreePlugin extends Plugin {
 			return;
 		}
 		if (attemptsRemaining <= 0) return;
-		window.setTimeout(() => {
+		leaf.view.containerEl.win.setTimeout(() => {
 			this.focusInlineTitle(leaf, filePath, attemptsRemaining - 1);
 		}, 50);
 	}
@@ -582,7 +580,8 @@ export default class PageTreePlugin extends Plugin {
 				: undefined;
 			if (!placement && canonicalVaultPath(sourcePagePath) === canonicalVaultPath(targetPagePath)) {
 				const siblings = findVisibleSiblings(projectTree(tree.getState(), before).roots, sourcePagePath);
-				const last = siblings?.filter((node) => canonicalVaultPath(node.path) !== canonicalVaultPath(sourcePagePath)).at(-1);
+				const otherSiblings = siblings?.filter((node) => canonicalVaultPath(node.path) !== canonicalVaultPath(sourcePagePath));
+				const last = otherSiblings?.[otherSiblings.length - 1];
 				if (last) placement = { path: targetPagePath, targetPath: last.path, type: "after" };
 			}
 			remapOrderPaths(tree, before, changes, mappedPaths(before, changes),

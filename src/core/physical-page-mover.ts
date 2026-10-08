@@ -204,8 +204,8 @@ export class PhysicalPageMover {
 		plan: PhysicalPageMovePlan,
 		pageMoved: boolean,
 		folderMoved: boolean,
-	): Promise<unknown | undefined> {
-		let firstError: unknown | undefined;
+	): Promise<unknown> {
+		let firstError: unknown;
 		if (pageMoved) {
 			try {
 				await this.adapter.move(plan.targetPagePath, plan.sourcePagePath);

@@ -261,8 +261,8 @@ export class PhysicalPageRenamer {
 		plan: PhysicalPageRenamePlan,
 		pageMoved: boolean,
 		folderMoved: boolean,
-	): Promise<unknown | undefined> {
-		let firstError: unknown | undefined;
+	): Promise<unknown> {
+		let firstError: unknown;
 		if (pageMoved) {
 			try {
 				await this.adapter.move(plan.targetPagePath, plan.sourcePagePath);
@@ -283,8 +283,8 @@ export class PhysicalPageRenamer {
 	private async rollbackExternal(
 		plan: PhysicalPageRenamePlan,
 		folderMoved: boolean,
-	): Promise<unknown | undefined> {
-		let firstError: unknown | undefined;
+	): Promise<unknown> {
+		let firstError: unknown;
 		if (folderMoved) {
 			try {
 				await this.adapter.move(plan.targetFolderPath, plan.sourceFolderPath);
@@ -302,7 +302,7 @@ export class PhysicalPageRenamer {
 	private async rollbackExternalPageRename(
 		sourcePagePath: string,
 		targetPagePath: string,
-	): Promise<unknown | undefined> {
+	): Promise<unknown> {
 		if (this.adapter.getEntryKind(targetPagePath) !== "file") return undefined;
 		try {
 			await this.adapter.move(targetPagePath, sourcePagePath);
