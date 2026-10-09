@@ -3,7 +3,7 @@
 	"name": "PageTree",
 	"version": "0.3.7",
 	"minAppVersion": "1.8.7",
-	"description": "Organize local Markdown as editable page-and-folder pairs in a physical tree.",
+	"description": "Replace folder-based organization with a page tree, where each page can hold both content and child pages.",
 	"author": "alpadoze",
 	"authorUrl": "https://github.com/alpadoze",
 	"isDesktopOnly": false
