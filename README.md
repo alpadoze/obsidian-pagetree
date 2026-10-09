@@ -5,5 +5,3 @@ PageTree organizes Obsidian notes into a page tree, where every page can contain
 ![PageTree showing nested pages and the selected page's content](doc/images/page-tree.png)
 
 Supports Obsidian on Windows, macOS, and iOS.
-
-[Design rationale](doc/design.md) · [设计思路](doc/design.zh.md)
