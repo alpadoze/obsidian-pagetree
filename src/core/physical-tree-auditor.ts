@@ -8,6 +8,12 @@ export interface PhysicalTreeEntry {
 	kind: PhysicalTreeEntryKind;
 }
 
+export interface ParentPageCreationProgress {
+	completed: number;
+	total: number;
+	currentPath: string | null;
+}
+
 export interface PhysicalTreePathConflict {
 	type: "page-body-blocked" | "paired-folder-blocked";
 	path: string;

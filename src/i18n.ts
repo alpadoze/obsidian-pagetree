@@ -63,6 +63,7 @@ export interface PageTreeTranslations {
 		createParents: string;
 		createParentsConfirm: string;
 		createParentsNote: string;
+		createParentsProgress(completed: number, total: number, percent: number): string;
 		orderHistory: string;
 		historyNote: string;
 		historyDeleted: string;
@@ -193,6 +194,7 @@ const ENGLISH: PageTreeTranslations = {
 		createParents: "Create missing parent pages",
 		createParentsConfirm: "Create the listed Markdown pages",
 		createParentsNote: "This will create only the empty Markdown parent pages listed below. It will not organize order records or move, overwrite, or delete existing files. Confirm the exact paths before continuing.",
+		createParentsProgress: (completed, total, percent) => `Processed ${completed} / ${total} (${percent}%)`,
 		orderHistory: "Order history",
 		historyNote: "Order history does not create or restore page contents. Undo cleanup can return an archived order record even while its file is missing. Restoring order after deletion requires the Markdown file to exist. Both actions require no conflicting active order record.",
 		historyDeleted: "Archived after deletion",
@@ -323,6 +325,7 @@ const SIMPLIFIED_CHINESE: PageTreeTranslations = {
 		createParents: "补建父页面",
 		createParentsConfirm: "创建所列 Markdown 页面",
 		createParentsNote: "此操作仅创建下方列出的空白 Markdown 父页面，不整理排序记录，不移动、覆盖或删除已有文件。请确认将创建的完整路径后继续。",
+		createParentsProgress: (completed, total, percent) => `已处理 ${completed} / ${total}（${percent}%）`,
 		orderHistory: "排序历史",
 		historyNote: "排序历史不会创建或恢复正文。“撤销整理”仅恢复旧排序记录，文件仍不存在时也可撤销；删除后“恢复排序”则须先找回对应 Markdown 文件。两者均不能与当前排序记录冲突。",
 		historyDeleted: "删除后归档",

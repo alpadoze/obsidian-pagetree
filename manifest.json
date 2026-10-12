@@ -1,7 +1,7 @@
 {
 	"id": "page-tree",
 	"name": "PageTree",
-	"version": "0.3.7",
+	"version": "0.3.8",
 	"minAppVersion": "1.8.7",
 	"description": "Replace folder-based organization with a page tree, where each page can hold both content and child pages.",
 	"author": "alpadoze",

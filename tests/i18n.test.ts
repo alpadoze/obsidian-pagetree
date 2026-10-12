@@ -35,6 +35,11 @@ describe("PageTree localization", () => {
 		expect(getPageTreeTranslations("zh").view.pageCount(2)).toBe("2 个页面");
 	});
 
+	it("localizes parent-page progress without confusing handled pages with created pages", () => {
+		expect(getPageTreeTranslations("en").audit.createParentsProgress(3, 8, 37)).toBe("Processed 3 / 8 (37%)");
+		expect(getPageTreeTranslations("zh").audit.createParentsProgress(3, 8, 37)).toBe("已处理 3 / 8（37%）");
+	});
+
 	it("localizes touch movement actions", () => {
 		expect(getPageTreeTranslations("en").movement.under).toBe("Move under…");
 		expect(getPageTreeTranslations("zh").movement.under).toBe("移至页面下…");

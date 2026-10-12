@@ -21,7 +21,7 @@ import {
 	type PageReferencePathResolver,
 	type PageReferenceScope,
 } from "./core/page-reference";
-import type { PhysicalTreeAudit } from "./core/physical-tree-auditor";
+import type { ParentPageCreationProgress, PhysicalTreeAudit } from "./core/physical-tree-auditor";
 import { projectTree, type ProjectedTreeNode } from "./core/tree-projection";
 import { canonicalVaultPath } from "./core/tree-state";
 import type { TreeStore } from "./core/tree-store";
@@ -53,7 +53,7 @@ export interface PageTreeViewActions {
 	deletePage(sourcePath: string): void;
 	checkPageTree(): Promise<PhysicalTreeAudit>;
 	archiveMissingOrder(records: Array<{ id: string; path: string }>): Promise<boolean>;
-	createMissingParentPages(paths: string[]): Promise<boolean>;
+	createMissingParentPages(paths: string[], onProgress?: (progress: ParentPageCreationProgress) => void): Promise<boolean>;
 	restoreOrderRecord(id: string): Promise<boolean>;
 	isCollapsed(pagePath: string): boolean;
 	setCollapsed(pagePath: string, collapsed: boolean): void;
@@ -845,7 +845,8 @@ class PageTreeTreeAuditModal extends Modal {
 					actionId: "confirm-create-parent-pages",
 					confirmLabel: this.strings.audit.createParentsConfirm,
 					failureMessage: this.strings.notices.parentPagesCreateFailed,
-					onConfirm: (paths) => this.actions.createMissingParentPages(paths),
+					showProgress: true,
+					onConfirm: (paths, onProgress) => this.actions.createMissingParentPages(paths, onProgress),
 				});
 			});
 		}
@@ -904,8 +905,8 @@ class PageTreeTreeAuditModal extends Modal {
 	private confirmPaths(confirmation: PageTreeAuditConfirmation): void {
 		new PageTreeAuditConfirmModal(this.app, {
 			...confirmation,
-			onConfirm: async (paths) => {
-				const completed = await confirmation.onConfirm(paths);
+			onConfirm: async (paths, onProgress) => {
+				const completed = await confirmation.onConfirm(paths, onProgress);
 				if (completed) this.close();
 				return completed;
 			},
@@ -964,10 +965,20 @@ interface PageTreeAuditConfirmation {
 	actionId: string;
 	confirmLabel: string;
 	failureMessage: string;
-	onConfirm(paths: string[]): Promise<boolean>;
+	showProgress?: boolean;
+	onConfirm(paths: string[], onProgress?: (progress: ParentPageCreationProgress) => void): Promise<boolean>;
 }
 
 class PageTreeAuditConfirmModal extends Modal {
+	private submitting = false;
+	private progress: {
+		container: HTMLDivElement;
+		bar: HTMLProgressElement;
+		summary: HTMLDivElement;
+		path: HTMLDivElement;
+		error: HTMLDivElement;
+	} | null = null;
+
 	constructor(
 		app: App,
 		private readonly confirmation: PageTreeAuditConfirmation,
@@ -983,6 +994,17 @@ class PageTreeAuditConfirmModal extends Modal {
 		const list = this.contentEl.createEl("ul", { cls: "page-tree-audit-list" });
 		for (const path of this.confirmation.paths) {
 			list.createEl("li", { text: path, attr: { "data-page-path": path } });
+		}
+		if (this.confirmation.showProgress) {
+			const container = this.contentEl.createDiv({ cls: "page-tree-task-progress" });
+			container.hidden = true;
+			this.progress = {
+				container,
+				summary: container.createDiv({ attr: { role: "status", "aria-live": "polite" } }),
+				bar: container.createEl("progress", { attr: { "aria-label": this.confirmation.title } }),
+				path: container.createDiv({ cls: "page-tree-task-progress-path" }),
+				error: container.createDiv({ cls: "page-tree-task-progress-error", attr: { role: "alert" } }),
+			};
 		}
 		const actions = this.contentEl.createDiv({ cls: "page-tree-audit-actions" });
 		const cancel = actions.createEl("button", {
@@ -1000,25 +1022,56 @@ class PageTreeAuditConfirmModal extends Modal {
 		confirm.addEventListener("click", () => { void this.submit(cancel, confirm); });
 	}
 
+	close(): void {
+		if (!this.submitting) super.close();
+	}
+
 	onClose(): void {
+		this.progress = null;
 		this.contentEl.empty();
 	}
 
+	private updateProgress(progress: ParentPageCreationProgress): void {
+		if (!this.progress) return;
+		const { completed, total, currentPath } = progress;
+		const percent = total === 0 ? 100 : Math.floor(completed / total * 100);
+		const summary = this.strings.audit.createParentsProgress(completed, total, percent);
+		this.progress.bar.max = Math.max(total, 1);
+		this.progress.bar.value = total === 0 ? 1 : completed;
+		this.progress.bar.setAttribute("aria-valuetext", summary);
+		this.progress.summary.setText(summary);
+		this.progress.path.setText(currentPath ?? this.strings.audit.actionPending);
+	}
+
 	private async submit(cancel: HTMLButtonElement, confirm: HTMLButtonElement): Promise<void> {
+		if (this.submitting) return;
+		this.submitting = true;
 		cancel.disabled = true;
 		confirm.disabled = true;
 		confirm.setText(this.strings.audit.actionPending);
+		if (this.progress) {
+			this.progress.container.hidden = false;
+			this.progress.error.empty();
+			this.updateProgress({ completed: 0, total: this.confirmation.paths.length, currentPath: null });
+		}
+		let completed = false;
 		try {
 			// Pass exactly the previewed paths, even if the vault changed while open.
-			if (await this.confirmation.onConfirm([...this.confirmation.paths])) this.close();
+			completed = await this.confirmation.onConfirm(
+				[...this.confirmation.paths],
+				(progress) => this.updateProgress(progress),
+			);
 		} catch (error) {
 			console.error("PageTree maintenance action failed", error);
 			new Notice(this.confirmation.failureMessage);
 		} finally {
+			this.submitting = false;
 			cancel.disabled = false;
 			confirm.disabled = false;
 			confirm.setText(this.confirmation.confirmLabel);
+			if (!completed) this.progress?.error.setText(this.confirmation.failureMessage);
 		}
+		if (completed) this.close();
 	}
 }
 

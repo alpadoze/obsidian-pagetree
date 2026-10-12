@@ -22,6 +22,7 @@ import {
 } from "./core/physical-page-renamer";
 import {
 	auditPhysicalTree,
+	type ParentPageCreationProgress,
 	type PhysicalTreeAudit,
 	type PhysicalTreeEntry,
 } from "./core/physical-tree-auditor";
@@ -312,7 +313,7 @@ export default class PageTreePlugin extends Plugin {
 			},
 			checkPageTree: () => this.auditPageTree(),
 			archiveMissingOrder: (paths) => this.archiveMissingOrder(paths),
-			createMissingParentPages: (paths) => this.createMissingParentPages(paths),
+			createMissingParentPages: (paths, onProgress) => this.createMissingParentPages(paths, onProgress),
 			restoreOrderRecord: (id) => this.restoreOrderHistory(id),
 			isCollapsed: (pagePath) => this.localViewState.isCollapsed(pagePath),
 			setCollapsed: (pagePath, collapsed) => {
@@ -372,7 +373,10 @@ export default class PageTreePlugin extends Plugin {
 		return operation;
 	}
 
-	private async createMissingParentPages(paths: string[]): Promise<boolean> {
+	private async createMissingParentPages(
+		paths: string[],
+		onProgress?: (progress: ParentPageCreationProgress) => void,
+	): Promise<boolean> {
 		if (!this.canMutateTree()) return false;
 		return this.runMaintenanceAction(async () => {
 			try {
@@ -380,12 +384,19 @@ export default class PageTreePlugin extends Plugin {
 				const initialAudit = auditPhysicalTree(this.getPhysicalTreeEntries(), this.treeStore.getState());
 				let createdPageCount = 0;
 				const approved = new Set(paths.map(canonicalVaultPath));
-				for (const pagePath of initialAudit.missingPageBodyPaths.filter((path) => approved.has(canonicalVaultPath(path)))) {
-					if (this.app.vault.getAbstractFileByPath(pagePath) !== null) continue;
-					const before = this.getManagedMarkdownPaths();
-					await this.createPhysicalPage(pagePath);
-					await this.treeMutations.run((tree) => addPageOrder(tree, before, pagePath));
-					createdPageCount += 1;
+				const candidates = initialAudit.missingPageBodyPaths.filter((path) => approved.has(canonicalVaultPath(path)));
+				let completed = 0;
+				onProgress?.({ completed, total: candidates.length, currentPath: null });
+				for (const pagePath of candidates) {
+					onProgress?.({ completed, total: candidates.length, currentPath: pagePath });
+					if (this.app.vault.getAbstractFileByPath(pagePath) === null) {
+						const before = this.getManagedMarkdownPaths();
+						await this.createPhysicalPage(pagePath);
+						await this.treeMutations.run((tree) => addPageOrder(tree, before, pagePath));
+						createdPageCount += 1;
+					}
+					completed += 1;
+					onProgress?.({ completed, total: candidates.length, currentPath: pagePath });
 				}
 				new Notice(this.strings.notices.parentPagesCreated(createdPageCount));
 			} catch (error) {

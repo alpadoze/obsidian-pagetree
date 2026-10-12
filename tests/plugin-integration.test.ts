@@ -2,6 +2,7 @@ import type { App, PluginManifest, WorkspaceLeaf } from "obsidian";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import PageTreePlugin from "../src/main";
 import type { PageTreeViewActions } from "../src/page-tree-view";
+import type { ParentPageCreationProgress } from "../src/core/physical-tree-auditor";
 
 const host = vi.hoisted(() => {
 	vi.stubGlobal("window", {});
@@ -75,6 +76,12 @@ async function createHost() {
 			getAbstractFileByPath: (path: string) => entries.get(path) ?? null,
 			getMarkdownFiles: () => [...entries.values()].filter((entry) => entry instanceof TFile),
 			getAllLoadedFiles: () => [...entries.values()],
+			create: vi.fn(async (path: string, _content: string) => {
+				if (entries.has(path)) throw new Error("File already exists");
+				const file = Object.assign(new TFile(), { path });
+				entries.set(path, file);
+				return file;
+			}),
 			trash: vi.fn(async () => { throw new Error("Bypassed the user's deletion setting"); }),
 		},
 		fileManager: { trashFile },
@@ -121,5 +128,99 @@ describe("Obsidian host integration", () => {
 		expect(app.vault.trash).not.toHaveBeenCalled();
 		expect(entries.size).toBe(0);
 		plugin.onunload();
+	});
+});
+
+async function createMissingParentHost() {
+	const fixture = await createHost();
+	const { TFile, TFolder } = await import("obsidian");
+	fixture.entries.delete("Project.md");
+	for (const name of ["Second", "Unapproved"]) {
+		fixture.entries.set(name, Object.assign(new TFolder(), { path: name }));
+		const path = `${name}/Child.md`;
+		fixture.entries.set(path, Object.assign(new TFile(), { path }));
+	}
+	return fixture;
+}
+
+describe("parent-page creation progress", () => {
+	it("counts only approved pages and advances after both file creation and order persistence", async () => {
+		const { app, plugin, actions, entries } = await createMissingParentHost();
+		let finishSave!: () => void;
+		const saving = new Promise<void>((resolve) => { finishSave = resolve; });
+		host.saveData.mockImplementationOnce(() => saving);
+		const reports: ParentPageCreationProgress[] = [];
+		const creation = actions.createMissingParentPages(["Project.md", "Second.md"], (progress) => reports.push(progress));
+		try {
+			await vi.waitFor(() => expect(host.saveData).toHaveBeenCalledOnce());
+			expect(app.vault.create).toHaveBeenCalledOnce();
+			expect(reports.at(-1)).toEqual({ completed: 0, total: 2, currentPath: "Project.md" });
+			finishSave();
+			expect(await creation).toBe(true);
+			expect(reports).toEqual([
+				{ completed: 0, total: 2, currentPath: null },
+				{ completed: 0, total: 2, currentPath: "Project.md" },
+				{ completed: 1, total: 2, currentPath: "Project.md" },
+				{ completed: 1, total: 2, currentPath: "Second.md" },
+				{ completed: 2, total: 2, currentPath: "Second.md" },
+			]);
+			expect(app.vault.create.mock.calls).toEqual([["Project.md", "\n"], ["Second.md", "\n"]]);
+			expect(entries.has("Unapproved.md")).toBe(false);
+		} finally {
+			finishSave();
+			await creation;
+			plugin.onunload();
+		}
+	});
+
+	it("keeps partial progress on failure and retries only remaining missing pages", async () => {
+		const { app, plugin, actions } = await createMissingParentHost();
+		const create = app.vault.create.getMockImplementation()!;
+		app.vault.create.mockImplementationOnce(create).mockRejectedValueOnce(new Error("Disk full"));
+		const reports: ParentPageCreationProgress[] = [];
+		const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			expect(await actions.createMissingParentPages(["Project.md", "Second.md"], (progress) => reports.push(progress))).toBe(false);
+			expect(reports.at(-1)).toEqual({ completed: 1, total: 2, currentPath: "Second.md" });
+			expect(reports.some(({ completed, total }) => completed === total)).toBe(false);
+			reports.length = 0;
+			expect(await actions.createMissingParentPages(["Project.md", "Second.md"], (progress) => reports.push(progress))).toBe(true);
+			expect(reports.at(-1)).toEqual({ completed: 1, total: 1, currentPath: "Second.md" });
+			expect(app.vault.create.mock.calls.filter(([path]) => path === "Project.md")).toHaveLength(1);
+		} finally {
+			errorLog.mockRestore();
+			plugin.onunload();
+		}
+	});
+
+	it("counts concurrently created paths as handled without overwriting them", async () => {
+		const { app, plugin, actions, entries } = await createMissingParentHost();
+		const { TFile } = await import("obsidian");
+		const reports: ParentPageCreationProgress[] = [];
+		try {
+			expect(await actions.createMissingParentPages(["Project.md", "Second.md"], (progress) => {
+				reports.push(progress);
+				if (progress.currentPath === "Second.md" && progress.completed === 1) {
+					entries.set("Second.md", Object.assign(new TFile(), { path: "Second.md" }));
+				}
+			})).toBe(true);
+			expect(app.vault.create.mock.calls).toEqual([["Project.md", "\n"]]);
+			expect(reports.at(-1)).toEqual({ completed: 2, total: 2, currentPath: "Second.md" });
+		} finally {
+			plugin.onunload();
+		}
+	});
+
+	it("reports an empty task without creating or persisting anything", async () => {
+		const { app, plugin, actions } = await createHost();
+		const progress = vi.fn();
+		try {
+			expect(await actions.createMissingParentPages(["Project.md"], progress)).toBe(true);
+			expect(progress).toHaveBeenCalledExactlyOnceWith({ completed: 0, total: 0, currentPath: null });
+			expect(app.vault.create).not.toHaveBeenCalled();
+			expect(host.saveData).not.toHaveBeenCalled();
+		} finally {
+			plugin.onunload();
+		}
 	});
 });
