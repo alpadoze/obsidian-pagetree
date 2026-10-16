@@ -5,6 +5,7 @@ export interface PageTreeTranslations {
 		open: string;
 		reload: string;
 		validate: string;
+		shareOrder: string;
 	};
 	view: {
 		pageCount(count: number): string;
@@ -88,6 +89,9 @@ export interface PageTreeTranslations {
 		auditHealthy: string;
 		auditFailed: string;
 		orderMaintenanceFailed: string;
+		orderSyncStarted: string;
+		orderSyncAlreadyActive: string;
+		orderSyncFailed: string;
 		orderHistorySaved: string;
 		orderHistoryRestored: string;
 		orderHistoryRestoreBlocked: string;
@@ -136,6 +140,7 @@ const ENGLISH: PageTreeTranslations = {
 		open: "Open PageTree",
 		reload: "Reload and validate page tree",
 		validate: "Validate page tree",
+		shareOrder: "Start sharing this device's page order",
 	},
 	view: {
 		pageCount: (count) => `${count} ${count === 1 ? "page" : "pages"}`,
@@ -219,6 +224,9 @@ const ENGLISH: PageTreeTranslations = {
 		auditHealthy: "PageTree: The physical page tree follows all pairing rules.",
 		auditFailed: "PageTree: Could not check the physical page tree.",
 		orderMaintenanceFailed: "PageTree: Could not organize order records. Markdown files were not changed.",
+		orderSyncStarted: "PageTree: Page order is shared through the _pagetree folder. Sync this folder and install this version on your other devices. Expanded and collapsed pages remain device-local.",
+		orderSyncAlreadyActive: "PageTree: Shared page order is already active. Further moves sync automatically; this device's old order was not published.",
+		orderSyncFailed: "PageTree: Could not read or write shared page order. Local notes are unchanged. Check the _pagetree folder, then reload the page tree to retry pending changes.",
 		orderHistorySaved: "PageTree: The selected order records were saved to recoverable history. Markdown files were not changed.",
 		orderHistoryRestored: "PageTree: The order record was restored. Page contents were not changed.",
 		orderHistoryRestoreBlocked: "PageTree: This order record cannot be restored because its file is missing or an active record conflicts. No page contents were restored or overwritten.",
@@ -267,6 +275,7 @@ const SIMPLIFIED_CHINESE: PageTreeTranslations = {
 		open: "打开 PageTree",
 		reload: "重新加载并校验页面树",
 		validate: "校验页面树",
+		shareOrder: "开始共享此设备的页面排序",
 	},
 	view: {
 		pageCount: (count) => `${count} 个页面`,
@@ -350,6 +359,9 @@ const SIMPLIFIED_CHINESE: PageTreeTranslations = {
 		auditHealthy: "PageTree：物理页面树符合全部配对规则。",
 		auditFailed: "PageTree：无法检查物理页面树。",
 		orderMaintenanceFailed: "PageTree：无法完成排序记录整理，Markdown 文件未被改动。",
+		orderSyncStarted: "PageTree：已通过 _pagetree 目录共享排序。请同步该目录，并在其他设备安装此版本。展开折叠仍各设备独立。",
+		orderSyncAlreadyActive: "PageTree：共享排序已启用，后续移动会自动同步；未发布此设备的旧排序。",
+		orderSyncFailed: "PageTree：无法读取或写入共享排序，笔记正文未被改动。请检查 _pagetree 目录，再重新加载页面树以重试待发送更改。",
 		orderHistorySaved: "PageTree：所选排序记录已保存到可恢复历史，Markdown 文件未被改动。",
 		orderHistoryRestored: "PageTree：排序记录已恢复，正文未被改动。",
 		orderHistoryRestoreBlocked: "PageTree：文件尚不存在或已有排序记录冲突，无法恢复此排序记录。未恢复或覆盖正文。",

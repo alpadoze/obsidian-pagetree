@@ -53,6 +53,11 @@ import { TreeRepository, type TreeLoadResult, type TreeLoadSource } from "./pers
 import { LEGACY_LOCAL_VIEW_STATE_KEY, LOCAL_VIEW_STATE_KEY, LocalViewState } from "./persistence/local-view-state";
 import { guardPluginDataStorage } from "./persistence/plugin-data-lifecycle";
 import { LegacyPluginEnabledError, migrateLegacyPluginData } from "./persistence/legacy-plugin-migration";
+import {
+	applySharedOrder, captureOrderGroups, changedOrderGroups, isSharedOrderPath,
+	remapSharedOrderGroups, SHARED_ORDER_FOLDER, type SharedOrderGroup,
+} from "./core/shared-order";
+import { ORDER_OUTBOX_KEY, SharedOrderSync } from "./persistence/shared-order-sync";
 
 export default class PageTreePlugin extends Plugin {
 	private treeRepository!: TreeRepository;
@@ -73,6 +78,10 @@ export default class PageTreePlugin extends Plugin {
 	private readonly pairedRenameSources = new Map<TFile, { source: string; pending: number }>();
 	private readonly pairingRenames: Array<{ from: string; to: string }> = [];
 	private strings!: PageTreeTranslations;
+	private sharedOrder: SharedOrderSync | undefined;
+	private orderSyncWarning = false;
+	private orderSyncRefreshQueued = false;
+	private pendingOrderChanges = 0;
 
 	async onload(): Promise<void> {
 		this.strings = getPageTreeTranslations(getLanguage());
@@ -99,6 +108,7 @@ export default class PageTreePlugin extends Plugin {
 			new Notice(this.strings.notices.collapsedSaveFailed);
 		}
 		this.treeMutations = new TreeMutationService(this.treeStore, this.treeRepository);
+		this.initializeSharedOrder();
 		const physicalPageAdapter: PhysicalPageDeleteAdapter = {
 			getEntryKind: (path) => {
 				const entry = this.app.vault.getAbstractFileByPath(path);
@@ -146,11 +156,16 @@ export default class PageTreePlugin extends Plugin {
 		});
 		this.pageDeleter = new PhysicalPageDeleter(physicalPageAdapter);
 		this.registerEvent(this.app.vault.on("create", (entry) => {
+			if (isSharedOrderPath(entry.path)) { this.queueSharedOrderRefresh(); return; }
 			if (!this.trackingReady || !(entry instanceof TFile)) return;
 			const change = this.pathTracker.create(entry.path);
 			if (!this.internalCreates.has(canonicalVaultPath(entry.path))) this.queueOrderMaintenance(change);
 		}));
 		this.registerEvent(this.app.vault.on("rename", (entry, oldPath) => {
+			if (isSharedOrderPath(entry.path) || isSharedOrderPath(oldPath)
+				|| entry.path === SHARED_ORDER_FOLDER || oldPath === SHARED_ORDER_FOLDER) {
+				this.queueSharedOrderRefresh();
+			}
 			this.updateLocalViewState(() => {
 				this.localViewState.renamePath(oldPath, entry.path, entry instanceof TFolder);
 			});
@@ -197,6 +212,9 @@ export default class PageTreePlugin extends Plugin {
 			}
 		}));
 		this.registerEvent(this.app.vault.on("delete", (entry) => {
+			if (isSharedOrderPath(entry.path) || entry.path === SHARED_ORDER_FOLDER) {
+				this.queueSharedOrderRefresh();
+			}
 			if (entry instanceof TFile) this.pairedRenameSources.delete(entry);
 			if (entry instanceof TFolder) {
 				for (const [file, lineage] of this.pairedRenameSources) {
@@ -210,11 +228,15 @@ export default class PageTreePlugin extends Plugin {
 			});
 			if (this.trackingReady) this.queueOrderMaintenance(this.pathTracker.delete(entry.path, entry instanceof TFolder));
 		}));
+		this.registerEvent(this.app.vault.on("modify", (entry) => {
+			if (isSharedOrderPath(entry.path)) this.queueSharedOrderRefresh();
+		}));
 		this.app.workspace.onLayoutReady(() => {
 			if (this.unloading) return;
 			// Initial indexing is observation, not a series of user-created pages.
 			this.pathTracker.reset(this.getManagedMarkdownPaths());
 			this.trackingReady = true;
+			this.queueSharedOrderRefresh();
 		});
 
 		this.registerView(
@@ -260,6 +282,20 @@ export default class PageTreePlugin extends Plugin {
 				);
 			},
 		});
+		this.addCommand({
+			id: "share-order",
+			name: this.strings.commands.shareOrder,
+			callback: () => this.queuePageOperation(async () => {
+				if (!this.canMutateTree() || !await this.refreshSharedOrder()) return;
+				if (this.sharedOrder?.active) {
+					new Notice(this.strings.notices.orderSyncAlreadyActive);
+					return;
+				}
+				if (await this.publishSharedOrder(captureOrderGroups(this.treeStore.getState(), this.getManagedMarkdownPaths()))) {
+					new Notice(this.strings.notices.orderSyncStarted, 10000);
+				}
+			}),
+		});
 
 		this.showRecoveryNotice(loadResult);
 	}
@@ -293,6 +329,7 @@ export default class PageTreePlugin extends Plugin {
 			await this.treeMutations.whenIdle();
 			const loadResult = await this.treeRepository.load();
 			this.applyLoadResult(loadResult);
+			await this.refreshSharedOrder();
 			this.refreshViews();
 			this.showRecoveryNotice(loadResult, true);
 		} catch (error) {
@@ -426,7 +463,20 @@ export default class PageTreePlugin extends Plugin {
 	}
 
 	private queuePageMove(sourcePath: string, destination: PageMoveDestination): void {
-		this.queuePageOperation(() => this.movePage(sourcePath, destination));
+		this.queuePageOperation(async () => {
+			if (!await this.refreshSharedOrder()) return;
+			const before = captureOrderGroups(this.treeStore.getState(), this.getManagedMarkdownPaths());
+			if (!await this.movePage(sourcePath, destination)) return;
+			const after = captureOrderGroups(this.treeStore.getState(), this.getManagedMarkdownPaths());
+			const changes = changedOrderGroups(before, after);
+			// Only an explicit successful move starts sharing. Opening an old device never publishes its stale order.
+			if (changes.length > 0) {
+				const alreadyActive = this.sharedOrder?.active ?? false;
+				if (await this.publishSharedOrder(alreadyActive ? changes : after) && !alreadyActive) {
+					new Notice(this.strings.notices.orderSyncStarted, 10000);
+				}
+			}
+		});
 	}
 
 	private queuePageDelete(sourcePath: string): void {
@@ -450,15 +500,22 @@ export default class PageTreePlugin extends Plugin {
 
 	private queueOrderMaintenance(change: VaultPathChange): void {
 		if (change.added.length + change.removed.length + change.changes.length === 0) return;
+		this.pendingOrderChanges += 1;
 		this.queuePageOperation(async () => {
-			if (this.loadSource === "degraded") return;
 			try {
+				if (this.loadSource === "degraded") return;
 				await this.applyOrderChange(change);
+				if (this.sharedOrder?.active && change.changes.length > 0) {
+					await this.publishSharedOrder(remapSharedOrderGroups(this.sharedOrder.groups, change.changes));
+				}
 				this.markCurrentStateLoaded();
-				this.refreshViews();
 			} catch (error) {
 				console.error("PageTree could not save file-event order metadata", error);
 				new Notice(this.strings.notices.orderMaintenanceFailed);
+			} finally {
+				this.pendingOrderChanges -= 1;
+				this.applyReceivedOrder();
+				this.refreshViews();
 			}
 		});
 	}
@@ -534,8 +591,8 @@ export default class PageTreePlugin extends Plugin {
 		}, 50);
 	}
 
-	private async movePage(sourcePath: string, destination: PageMoveDestination): Promise<void> {
-		if (!this.canMutateTree()) return;
+	private async movePage(sourcePath: string, destination: PageMoveDestination): Promise<boolean> {
+		if (!this.canMutateTree()) return false;
 		const before = this.getManagedMarkdownPaths();
 		const targetParentPath = destination.type === "inside"
 			? destination.targetParentPath
@@ -551,7 +608,7 @@ export default class PageTreePlugin extends Plugin {
 				await this.commitPageMoveMetadata(sourcePath, targetParentPath, destination, before);
 				this.markCurrentStateLoaded();
 				this.refreshViews();
-				return;
+				return true;
 			}
 
 			const result = await this.pageMover.movePage(
@@ -564,14 +621,16 @@ export default class PageTreePlugin extends Plugin {
 					before,
 				),
 			);
-			if (!result.moved) return;
+			if (!result.moved) return false;
 
 			this.markCurrentStateLoaded();
 			this.refreshViews();
+			return true;
 		} catch (error) {
 			console.error("PageTree failed to move a physical page subtree", error);
 			this.refreshViews();
 			new Notice(createPageMoveErrorMessage(error, this.strings));
+			return false;
 		}
 	}
 
@@ -674,6 +733,93 @@ export default class PageTreePlugin extends Plugin {
 	private setCollapsed(pagePath: string, collapsed: boolean): void {
 		this.updateLocalViewState(() => this.localViewState.setCollapsed(pagePath, collapsed));
 		this.refreshViews();
+	}
+
+	private initializeSharedOrder(): void {
+		try {
+			this.sharedOrder = new SharedOrderSync({
+				list: () => this.app.vault.getAllLoadedFiles()
+					.filter((entry) => entry instanceof TFile && isSharedOrderPath(entry.path))
+					.map((entry) => entry.path),
+				read: async (path) => {
+					const file = this.app.vault.getAbstractFileByPath(path);
+					if (!(file instanceof TFile)) throw new Error("Shared order file is unavailable.");
+					return this.app.vault.read(file);
+				},
+				append: async (path, contents) => {
+					if (this.unloading) throw new Error("PageTree is unloading.");
+					let folder = this.app.vault.getAbstractFileByPath(SHARED_ORDER_FOLDER);
+					if (folder === null) {
+						try { await this.app.vault.createFolder(SHARED_ORDER_FOLDER); }
+						catch (error) {
+							if (!(this.app.vault.getAbstractFileByPath(SHARED_ORDER_FOLDER) instanceof TFolder)) throw error;
+						}
+						folder = this.app.vault.getAbstractFileByPath(SHARED_ORDER_FOLDER);
+					}
+					if (!(folder instanceof TFolder)) throw new Error("The shared order folder is blocked by a file.");
+					const existing = this.app.vault.getAbstractFileByPath(path);
+					if (existing !== null) {
+						if (existing instanceof TFile && await this.app.vault.read(existing) === contents) return;
+						throw new Error("Refusing to overwrite a shared order file.");
+					}
+					if (this.unloading) throw new Error("PageTree is unloading.");
+					await this.app.vault.create(path, contents);
+				},
+				loadOutbox: (): unknown => this.app.loadLocalStorage(ORDER_OUTBOX_KEY),
+				saveOutbox: (documents) => {
+					if (this.unloading) throw new Error("PageTree is unloading.");
+					this.app.saveLocalStorage(ORDER_OUTBOX_KEY, documents);
+				},
+			});
+		} catch (error) { this.reportOrderSyncError(error); }
+	}
+
+	private queueSharedOrderRefresh(): void {
+		if (!this.trackingReady || this.unloading || this.orderSyncRefreshQueued) return;
+		this.orderSyncRefreshQueued = true;
+		this.queuePageOperation(async () => {
+			this.orderSyncRefreshQueued = false;
+			await this.refreshSharedOrder();
+			this.refreshViews();
+		});
+	}
+
+	private async refreshSharedOrder(): Promise<boolean> {
+		if (!this.sharedOrder) return false;
+		try {
+			await this.sharedOrder.reload();
+			if (this.unloading) return false;
+			this.applyReceivedOrder();
+			this.orderSyncWarning = false;
+			return true;
+		} catch (error) {
+			this.reportOrderSyncError(error);
+			return false;
+		}
+	}
+
+	private applyReceivedOrder(): void {
+		if (this.sharedOrder && this.loadSource !== "degraded" && !this.unloading && this.pendingOrderChanges === 0) {
+			applySharedOrder(this.treeStore, this.getManagedMarkdownPaths(), this.sharedOrder.groups);
+		}
+	}
+
+	private async publishSharedOrder(groups: SharedOrderGroup[]): Promise<boolean> {
+		if (!this.sharedOrder || this.unloading) return false;
+		try {
+			await this.sharedOrder.publish(groups);
+			this.orderSyncWarning = false;
+			return true;
+		} catch (error) {
+			this.reportOrderSyncError(error);
+			return false;
+		}
+	}
+
+	private reportOrderSyncError(error: unknown): void {
+		console.error("PageTree could not sync page order", error);
+		if (!this.orderSyncWarning && !this.unloading) new Notice(this.strings.notices.orderSyncFailed, 10000);
+		this.orderSyncWarning = true;
 	}
 
 	private updateLocalViewState(update: () => void): void {
