@@ -10,19 +10,18 @@ export interface PageTreeTranslations {
 	view: {
 		pageCount(count: number): string;
 		checkTree: string;
-		checkTreeTitle: string;
 		createRoot: string;
-		createRootTitle: string;
 		treeLabel: string;
+		recentEdited: string;
+		vaultRoot: string;
+		modifiedAt(date: string): string;
+		formatModifiedTime(date: Date): string;
 		emptyTitle: string;
 		emptyDescription: string;
 		createPage: string;
 		expand(pageTitle: string): string;
 		collapse(pageTitle: string): string;
-		expandTitle: string;
-		collapseTitle: string;
 		createChild(pageTitle: string): string;
-		createChildTitle: string;
 		moveToRoot: string;
 		pageActions(pageTitle: string): string;
 		loadDegraded(issueCount: number): string;
@@ -135,6 +134,12 @@ export interface PageTreeTranslations {
 	};
 }
 
+const modifiedTimeOptions: Intl.DateTimeFormatOptions = {
+	year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+};
+const englishModifiedTime = new Intl.DateTimeFormat("en", modifiedTimeOptions);
+const chineseModifiedTime = new Intl.DateTimeFormat("zh-CN", { ...modifiedTimeOptions, hour12: false });
+
 const ENGLISH: PageTreeTranslations = {
 	commands: {
 		open: "Open PageTree",
@@ -145,19 +150,18 @@ const ENGLISH: PageTreeTranslations = {
 	view: {
 		pageCount: (count) => `${count} ${count === 1 ? "page" : "pages"}`,
 		checkTree: "Check page tree",
-		checkTreeTitle: "Inspect page tree and order history",
 		createRoot: "Create root page",
-		createRootTitle: "Create untitled root page",
 		treeLabel: "PageTree page tree",
+		recentEdited: "Recently edited",
+		vaultRoot: "Vault root",
+		modifiedAt: (date) => `Modified: ${date}`,
+		formatModifiedTime: (date) => englishModifiedTime.format(date),
 		emptyTitle: "No pages yet",
 		emptyDescription: "Create a root page to start your page tree.",
 		createPage: "Create page",
 		expand: (pageTitle) => `Expand ${pageTitle}`,
 		collapse: (pageTitle) => `Collapse ${pageTitle}`,
-		expandTitle: "Expand",
-		collapseTitle: "Collapse",
 		createChild: (pageTitle) => `Create child page under ${pageTitle}`,
-		createChildTitle: "Create untitled child page",
 		moveToRoot: "Move to root level",
 		pageActions: (pageTitle) => `Actions for ${pageTitle}`,
 		loadDegraded: (issueCount) => `Page order data is unavailable. Rebuilt the tree from physical paths (${issueCount} ${issueCount === 1 ? "issue" : "issues"}).`,
@@ -280,19 +284,18 @@ const SIMPLIFIED_CHINESE: PageTreeTranslations = {
 	view: {
 		pageCount: (count) => `${count} 个页面`,
 		checkTree: "检查页面树",
-		checkTreeTitle: "查看页面树与排序历史",
 		createRoot: "新建根页面",
-		createRootTitle: "新建未命名根页面",
 		treeLabel: "PageTree 页面树",
+		recentEdited: "最近编辑",
+		vaultRoot: "库根目录",
+		modifiedAt: (date) => `修改时间：${date}`,
+		formatModifiedTime: (date) => chineseModifiedTime.format(date),
 		emptyTitle: "还没有页面",
 		emptyDescription: "新建一个根页面，开始构建页面树。",
 		createPage: "新建页面",
 		expand: (pageTitle) => `展开 ${pageTitle}`,
 		collapse: (pageTitle) => `折叠 ${pageTitle}`,
-		expandTitle: "展开",
-		collapseTitle: "折叠",
 		createChild: (pageTitle) => `在 ${pageTitle} 下新建子页面`,
-		createChildTitle: "新建未命名子页面",
 		moveToRoot: "移至根层级",
 		pageActions: (pageTitle) => `${pageTitle} 的操作菜单`,
 		loadDegraded: (issueCount) => `页面排序数据不可用，已根据物理路径重建页面树（${issueCount} 个问题）。`,

@@ -10,12 +10,93 @@
 	position: sticky;
 	top: 0;
 	z-index: 2;
+	background: var(--background-primary);
+}
+
+.page-tree-toolbar {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	min-height: 42px;
 	padding: 3px 5px 7px 8px;
 	background: var(--background-primary);
+}
+
+.page-tree-mode-toggle[aria-pressed="true"] {
+	background: var(--nav-item-background-active);
+	color: var(--text-accent);
+}
+
+.page-tree-recent-item:focus-visible {
+	outline: 2px solid var(--background-modifier-border-focus);
+	outline-offset: -2px;
+}
+
+.page-tree-view .page-tree-recent-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 7px;
+	width: 100%;
+	height: auto;
+	padding: 8px;
+	border: 0;
+	border-radius: var(--radius-s);
+	background: transparent;
+	color: var(--nav-item-color);
+	font: inherit;
+	text-align: start;
+	box-shadow: none;
+}
+
+.page-tree-view .page-tree-recent-item:hover {
+	background: var(--nav-item-background-hover);
+	color: var(--nav-item-color-hover);
+}
+
+.page-tree-recent-row.is-active .page-tree-recent-item {
+	background: var(--nav-item-background-active);
+	color: var(--nav-item-color-active);
+}
+
+.page-tree-recent-item .page-tree-page-icon {
+	height: 20px;
+}
+
+.page-tree-recent-body {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.page-tree-recent-title,
+.page-tree-recent-path {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.page-tree-recent-title {
+	font-size: var(--font-ui-small);
+	line-height: 1.5;
+}
+
+.page-tree-recent-details {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 10px;
+	margin-top: 3px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
+.page-tree-recent-path {
+	flex: 1 1 90px;
+	min-width: 0;
+}
+
+.page-tree-recent-time {
+	white-space: nowrap;
 }
 
 .page-tree-heading {
@@ -458,9 +539,14 @@
 	padding: 6px 4px max(12px, env(safe-area-inset-bottom));
 }
 
-.page-tree-view.is-mobile .page-tree-header {
+.page-tree-view.is-mobile .page-tree-toolbar {
 	min-height: 52px;
 	padding-block: 4px 8px;
+}
+
+.page-tree-view.is-mobile .page-tree-recent-item {
+	min-height: 60px;
+	padding-block: 10px;
 }
 
 .page-tree-view.is-mobile .page-tree-header-action {

@@ -8,7 +8,9 @@ import {
 	Notice,
 	Platform,
 	setIcon,
+	setTooltip,
 	TFile,
+	type ViewStateResult,
 	WorkspaceLeaf,
 } from "obsidian";
 import {
@@ -28,9 +30,12 @@ import type { TreeStore } from "./core/tree-store";
 import { isPageEffectivelyCollapsed } from "./core/tree-visibility";
 import type { PageTreeTranslations } from "./i18n";
 import type { TreeLoadSource } from "./persistence/tree-repository";
+import { renderRecentPages } from "./recent-pages";
 
 export const VIEW_TYPE_PAGE_TREE = "page-tree-view";
 const PAGE_TREE_DRAG_TYPE = "application/x-page-tree-path";
+type PageTreeViewMode = "tree" | "recent";
+let nextPanelId = 0;
 
 export interface PageTreeLoadInfo {
 	source: TreeLoadSource;
@@ -69,6 +74,10 @@ export class PageTreeView extends ItemView {
 	private draggedPagePath: string | null = null;
 	private readonly suppressedAutoRevealPaths = new Set<string>();
 	private pendingRevealFrame: number | null = null;
+	private pendingRefreshFrame: number | null = null;
+	private mode: PageTreeViewMode = "tree";
+	private readonly panelId = `page-tree-panel-${nextPanelId++}`;
+	private readonly scrollPositions = { tree: { top: 0, left: 0 }, recent: { top: 0, left: 0 } };
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -92,6 +101,17 @@ export class PageTreeView extends ItemView {
 		return "list-tree";
 	}
 
+	getState(): Record<string, unknown> {
+		return { ...super.getState(), mode: this.mode };
+	}
+
+	async setState(state: unknown, result: ViewStateResult): Promise<void> {
+		this.mode = typeof state === "object" && state !== null && "mode" in state && state.mode === "recent"
+			? "recent" : "tree";
+		await super.setState(state, result);
+		this.refresh();
+	}
+
 	async onOpen(): Promise<void> {
 		const refresh = (): void => this.refresh();
 		const revealActiveFile = (): void => {
@@ -102,6 +122,15 @@ export class PageTreeView extends ItemView {
 		this.registerEvent(this.app.vault.on("create", refresh));
 		this.registerEvent(this.app.vault.on("rename", refresh));
 		this.registerEvent(this.app.vault.on("delete", refresh));
+		this.registerEvent(this.app.vault.on("modify", (file) => {
+			if (this.mode !== "recent" || !(file instanceof TFile) || file.extension !== "md") return;
+			// Coalesce writes from typing or synchronisation into one visible update.
+			if (this.pendingRefreshFrame !== null) return;
+			this.pendingRefreshFrame = this.contentEl.win.requestAnimationFrame(() => {
+				this.pendingRefreshFrame = null;
+				if (this.mode === "recent") this.refresh();
+			});
+		}));
 		this.registerEvent(this.app.workspace.on("file-open", revealActiveFile));
 
 		revealActiveFile();
@@ -109,12 +138,20 @@ export class PageTreeView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.cancelPendingReveal();
+		if (this.pendingRefreshFrame !== null) {
+			this.contentEl.win.cancelAnimationFrame(this.pendingRefreshFrame);
+			this.pendingRefreshFrame = null;
+		}
 	}
 
 	refresh(revealActiveFile = false): void {
 		this.cancelPendingReveal();
 		const scrollTop = this.contentEl.scrollTop;
 		const scrollLeft = this.contentEl.scrollLeft;
+		const activeElement = this.contentEl.doc.activeElement;
+		const focused = activeElement && this.contentEl.contains(activeElement) ? activeElement : null;
+		const focusedPage = focused?.matches(".page-tree-recent-item") ? focused.getAttribute("data-page-path") : null;
+		const focusedMode = focused?.getAttribute("data-page-tree-mode");
 		this.clearDragState();
 		this.contentEl.empty();
 		this.contentEl.addClass("page-tree-view");
@@ -130,43 +167,54 @@ export class PageTreeView extends ItemView {
 		const loadInfo = this.getLoadInfo();
 
 		const header = this.contentEl.createDiv({ cls: "page-tree-header" });
-		const heading = header.createDiv({ cls: "page-tree-heading" });
+		const toolbar = header.createDiv({ cls: "page-tree-toolbar" });
+		const heading = toolbar.createDiv({ cls: "page-tree-heading" });
 		heading.createEl("h4", { text: "PageTree" });
 		heading.createDiv({
 			cls: "page-tree-count",
 			text: this.strings.view.pageCount(projection.pageCount),
 		});
-		const checkTreeButton = header.createEl("button", {
+		this.renderModeSwitch(toolbar);
+		const checkTreeButton = toolbar.createEl("button", {
 			cls: "clickable-icon page-tree-icon-button page-tree-header-action",
 			attr: {
-				"aria-label": this.strings.view.checkTree,
 				"data-page-tree-action": "check-tree",
 			},
 		});
 		checkTreeButton.type = "button";
-		checkTreeButton.title = this.strings.view.checkTreeTitle;
+		setTooltip(checkTreeButton, this.strings.view.checkTree);
 		setIcon(checkTreeButton, "list-checks");
 		checkTreeButton.addEventListener("click", () => {
 			void this.checkPageTree(checkTreeButton);
 		});
-		const createRootButton = header.createEl("button", {
+		const createRootButton = toolbar.createEl("button", {
 			cls: "clickable-icon page-tree-icon-button page-tree-header-action",
 			attr: {
-				"aria-label": this.strings.view.createRoot,
 				"data-page-tree-action": "create-root",
 			},
 		});
 		createRootButton.type = "button";
-		createRootButton.title = this.strings.view.createRootTitle;
+		setTooltip(createRootButton, this.strings.view.createRoot);
 		setIcon(createRootButton, "plus");
 		createRootButton.addEventListener("click", () => this.actions.createRootPage());
+		if (focusedMode === this.mode) {
+			this.contentEl.querySelector<HTMLElement>(`[data-page-tree-mode="${this.mode}"]`)?.focus({ preventScroll: true });
+		}
+
+		const panel = this.contentEl.createDiv({
+			cls: "page-tree-panel",
+			attr: {
+				id: this.panelId, role: "region",
+				"aria-label": this.mode === "tree" ? this.strings.view.treeLabel : this.strings.view.recentEdited,
+			},
+		});
 
 		const noticeText = createNoticeText(
 			loadInfo,
 			this.strings,
 		);
 		if (noticeText !== null) {
-			const notice = this.contentEl.createDiv({
+			const notice = panel.createDiv({
 				cls: loadInfo.source === "degraded"
 					? "page-tree-notice is-warning"
 					: "page-tree-notice",
@@ -176,9 +224,9 @@ export class PageTreeView extends ItemView {
 			notice.createSpan({ text: noticeText });
 		}
 
-		const list = this.contentEl.createDiv({ cls: "page-tree-list" });
-		list.setAttribute("role", "tree");
-		list.setAttribute("aria-label", this.strings.view.treeLabel);
+		const list = panel.createDiv({ cls: "page-tree-list" });
+		list.setAttribute("role", this.mode === "tree" ? "tree" : "list");
+		list.setAttribute("aria-label", this.mode === "tree" ? this.strings.view.treeLabel : this.strings.view.recentEdited);
 
 		if (files.length === 0) {
 			const empty = list.createDiv({ cls: "page-tree-empty" });
@@ -193,6 +241,18 @@ export class PageTreeView extends ItemView {
 		}
 
 		const activePath = this.app.workspace.getActiveFile()?.path;
+		if (this.mode === "recent") {
+			renderRecentPages(list, files, activePath, this.strings, (file) => {
+				void this.app.workspace.getLeaf(false).openFile(file);
+			});
+			if (focusedPage !== null) {
+				Array.from(list.querySelectorAll<HTMLElement>(".page-tree-recent-item"))
+					.find((button) => button.dataset.pagePath === focusedPage)?.focus({ preventScroll: true });
+			}
+			this.contentEl.scrollTop = scrollTop;
+			this.contentEl.scrollLeft = scrollLeft;
+			return;
+		}
 		const activeAncestorPaths = findActiveAncestorPaths(projection.roots, activePath);
 		for (const [rootIndex, root] of projection.roots.entries()) {
 			this.renderBranch(
@@ -218,6 +278,33 @@ export class PageTreeView extends ItemView {
 				this.revealActivePage();
 			});
 		}
+	}
+
+	private renderModeSwitch(header: HTMLElement): void {
+		const button = header.createEl("button", {
+			cls: "clickable-icon page-tree-icon-button page-tree-header-action page-tree-mode-toggle",
+			attr: {
+				"aria-pressed": String(this.mode === "recent"),
+				"aria-controls": this.panelId,
+				"data-page-tree-action": "switch-view",
+				"data-page-tree-mode": this.mode,
+			},
+		});
+		button.type = "button";
+		setTooltip(button, this.strings.view.recentEdited);
+		setIcon(button, "clock");
+		button.addEventListener("click", () => this.switchMode(this.mode === "tree" ? "recent" : "tree"));
+	}
+
+	private switchMode(mode: PageTreeViewMode): void {
+		if (this.mode === mode) return;
+		this.scrollPositions[this.mode] = { top: this.contentEl.scrollTop, left: this.contentEl.scrollLeft };
+		this.mode = mode;
+		this.refresh();
+		this.contentEl.scrollTop = this.scrollPositions[mode].top;
+		this.contentEl.scrollLeft = this.scrollPositions[mode].left;
+		this.contentEl.querySelector<HTMLElement>(`[data-page-tree-mode="${mode}"]`)?.focus({ preventScroll: true });
+		this.app.workspace.requestSaveLayout();
 	}
 
 	private cancelPendingReveal(): void {
@@ -342,16 +429,13 @@ export class PageTreeView extends ItemView {
 					? "clickable-icon page-tree-icon-button page-tree-toggle"
 					: "clickable-icon page-tree-icon-button page-tree-toggle is-expanded",
 				attr: {
-					"aria-label": collapsed
-						? this.strings.view.expand(file.basename)
-						: this.strings.view.collapse(file.basename),
 					"aria-expanded": collapsed ? "false" : "true",
 				},
 			});
 			toggle.type = "button";
-			toggle.title = collapsed
-				? this.strings.view.expandTitle
-				: this.strings.view.collapseTitle;
+			setTooltip(toggle, collapsed
+				? this.strings.view.expand(file.basename)
+				: this.strings.view.collapse(file.basename));
 			setIcon(toggle, "chevron-right");
 			toggle.addEventListener("click", () => {
 				const canonicalPath = canonicalVaultPath(file.path);
@@ -374,7 +458,7 @@ export class PageTreeView extends ItemView {
 			text: file.basename,
 			attr: { role: "button", tabindex: "0" },
 		});
-		pageButton.title = file.path;
+		setTooltip(pageButton, file.path);
 		if (active) pageButton.setAttribute("aria-current", "page");
 		const openPage = (): void => {
 			void this.app.workspace.getLeaf(false).openFile(file);
@@ -393,10 +477,9 @@ export class PageTreeView extends ItemView {
 
 		const createChildButton = wrapper.createEl("button", {
 			cls: "clickable-icon page-tree-icon-button page-tree-add-child",
-			attr: { "aria-label": this.strings.view.createChild(file.basename) },
 		});
 		createChildButton.type = "button";
-		createChildButton.title = this.strings.view.createChildTitle;
+		setTooltip(createChildButton, this.strings.view.createChild(file.basename));
 		setIcon(createChildButton, "plus");
 		createChildButton.addEventListener("click", () => {
 			this.actions.createChildPage(file.path);
@@ -404,10 +487,9 @@ export class PageTreeView extends ItemView {
 
 		const actionsButton = wrapper.createEl("button", {
 			cls: "clickable-icon page-tree-icon-button page-tree-row-action",
-			attr: { "aria-label": this.strings.view.pageActions(file.basename) },
 		});
 		actionsButton.type = "button";
-		actionsButton.title = this.strings.view.pageActions(file.basename);
+		setTooltip(actionsButton, this.strings.view.pageActions(file.basename));
 		setIcon(actionsButton, "ellipsis");
 		actionsButton.addEventListener("click", (event) => {
 			event.preventDefault();
