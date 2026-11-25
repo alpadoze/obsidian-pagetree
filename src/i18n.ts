@@ -36,6 +36,7 @@ export interface PageTreeTranslations {
 		noAvailableParent: string;
 	};
 	copy: {
+		pageVaultPath: string;
 		pageAbsolute: string;
 		subtreeAbsolute: string;
 		rootPage: string;
@@ -176,6 +177,7 @@ const ENGLISH: PageTreeTranslations = {
 		noAvailableParent: "PageTree: No other page is available as a parent.",
 	},
 	copy: {
+		pageVaultPath: "Copy vault-relative path",
 		pageAbsolute: "Copy page absolute path",
 		subtreeAbsolute: "Copy entire subtree absolute paths",
 		rootPage: "Root page",
@@ -310,6 +312,7 @@ const SIMPLIFIED_CHINESE: PageTreeTranslations = {
 		noAvailableParent: "PageTree：没有可作为父页面的其他页面。",
 	},
 	copy: {
+		pageVaultPath: "复制库内路径",
 		pageAbsolute: "复制页面绝对路径",
 		subtreeAbsolute: "复制整个子树绝对路径",
 		rootPage: "根页面",

@@ -551,7 +551,11 @@ export class PageTreeView extends ItemView {
 	}
 
 	private addCopyActions(menu: Menu, file: TFile, hasChildren: boolean): boolean {
-		if (Platform.isMobile || !(this.app.vault.adapter instanceof FileSystemAdapter)) {
+		if (Platform.isMobile) {
+			this.addCopyAction(menu, this.strings.copy.pageVaultPath, file.path, "page", (path) => path);
+			return true;
+		}
+		if (!(this.app.vault.adapter instanceof FileSystemAdapter)) {
 			return false;
 		}
 		const fileSystemAdapter = this.app.vault.adapter;
@@ -604,11 +608,8 @@ export class PageTreeView extends ItemView {
 				childPages: this.strings.copy.childPages,
 			});
 			await clipboard.writeText(text);
-			new Notice(
-				scope === "page"
-					? this.strings.copy.pageCopied
-					: this.strings.copy.subtreeCopied,
-			);
+			const message = scope === "page" ? this.strings.copy.pageCopied : this.strings.copy.subtreeCopied;
+			new Notice(Platform.isMobile ? `${message}\n${text}` : message);
 		} catch (error) {
 			console.error("PageTree failed to copy a page reference", error);
 			new Notice(this.strings.copy.failed);
