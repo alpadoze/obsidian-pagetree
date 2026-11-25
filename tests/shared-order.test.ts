@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	applySharedOrder, captureOrderGroups, changedOrderGroups, decodeSharedOrder,
-	mergeSharedOrders, remapSharedOrderGroups, SHARED_ORDER_FORMAT, sharedOrderPath,
+	mergeSharedOrders, remapSharedOrderGroups, sharedOrderAfterTitleRename, SHARED_ORDER_FORMAT, sharedOrderPath,
 	type SharedOrderDocument, type SharedOrderGroup,
 } from "../src/core/shared-order";
 import { createEmptyTreeState } from "../src/core/tree-state";
@@ -101,6 +101,20 @@ describe("shared order data", () => {
 		const after = [group(["B.md", "A.md"]), before[1]!];
 		expect(changedOrderGroups(before, after)).toEqual([after[0]]);
 		expect(changedOrderGroups(after, after)).toEqual([]);
+	});
+
+	it("pins visible neighbors around an unranked title without dropping absent siblings or sharing unrelated groups", () => {
+		const shared = [group(["Offline.md", "B.md", "X.md", "D.md"])];
+		const visible = [group(["A.md", "B.md", "C.md", "D.md", "E.md"]), group(["B/Local.md"], "B.md")];
+		expect(sharedOrderAfterTitleRename(shared, visible, { from: "C.md", to: "ZZ.md" }))
+			.toEqual([group(["Offline.md", "A.md", "B.md", "X.md", "ZZ.md", "D.md", "E.md"])]);
+	});
+
+	it("keeps the source slot when a title reuses the recorded name of an absent page", () => {
+		const shared = [group(["OldTitle.md", "A.md", "Current.md", "Z.md"])];
+		const visible = [group(["A.md", "Current.md", "Z.md"])];
+		expect(sharedOrderAfterTitleRename(shared, visible, { from: "Current.md", to: "OldTitle.md" }))
+			.toEqual([group(["A.md", "OldTitle.md", "Z.md"])]);
 	});
 
 	it.each(["../Escape.md", "/absolute.md", "C:/x.md", ".obsidian/x.md", "a\\b.md", "a\u0000.md"])("rejects unsafe path %s", (path) => {

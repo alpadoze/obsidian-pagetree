@@ -1,6 +1,9 @@
+import { isPageInsideSubtree } from "./page-path";
+import type { OrderPathChange } from "./order-maintenance";
 import { projectTree, type ProjectedTreeNode } from "./tree-projection";
 import { canonicalVaultPath, generateNodeId, type TreeState } from "./tree-state";
 import type { TreeStore } from "./tree-store";
+import { pathMatchesEntry } from "./vault-path-tracker";
 
 // Not a hidden folder: ordinary vault sync can carry these JSON files on mobile.
 export const SHARED_ORDER_FOLDER = "_pagetree";
@@ -133,27 +136,85 @@ export function applySharedOrder(tree: TreeStore, paths: string[], groups: Share
 	}
 }
 
-/** Remap only explicit rename events, including records for not-yet-downloaded pages. */
+/** Insert unrecorded pages at their visible positions while keeping undownloaded shared siblings. */
+export function includeVisibleSiblings(shared: SharedOrderGroup[], visible: SharedOrderGroup[]): SharedOrderGroup[] {
+	const result = new Map(shared.map(group => [groupKey(group.parent), group]));
+	for (const group of visible) {
+		const key = groupKey(group.parent);
+		const recorded = result.get(key)?.paths ?? [];
+		const known = new Set(recorded.map(canonicalVaultPath));
+		const insertBefore = new Map<string, string[]>();
+		let pending: string[] = [];
+		for (const path of group.paths) {
+			const sibling = canonicalVaultPath(path);
+			if (!known.has(sibling)) pending.push(path);
+			else if (pending.length > 0) {
+				insertBefore.set(sibling, pending);
+				pending = [];
+			}
+		}
+		const paths = recorded.flatMap(path => [...(insertBefore.get(canonicalVaultPath(path)) ?? []), path]);
+		result.set(key, { parent: group.parent, paths: paths.concat(pending) });
+	}
+	return [...result.values()];
+}
+
+export function sharedOrderAfterTitleRename(
+	shared: SharedOrderGroup[], before: SharedOrderGroup[], rename: OrderPathChange,
+): SharedOrderGroup[] {
+	const from = canonicalVaultPath(rename.from);
+	const to = canonicalVaultPath(rename.to);
+	const siblings = before.find(group => group.paths.some(path => canonicalVaultPath(path) === from));
+	if (!siblings) return remapSharedOrderGroups(shared, [rename]);
+	const recorded = shared.find(group => groupKey(group.parent) === groupKey(siblings.parent));
+	const ranks = new Set(recorded?.paths.map(canonicalVaultPath));
+	// Another device's order can arrive before its file rename. Respect its placement on replay.
+	if (!ranks.has(from) && ranks.has(to)) return remapSharedOrderGroups(shared, [rename]);
+	const affected = before.filter(group => (group === siblings && !ranks.has(from))
+		|| (group.parent !== null && (canonicalVaultPath(group.parent) === from || isPageInsideSubtree(group.parent, rename.from))));
+	const completed = includeVisibleSiblings(shared, affected);
+	return changedOrderGroups(shared, remappedOrder(completed, [rename]));
+}
+
+/** An observed folder rename covers shared descendants even before their files are downloaded. */
 export function remapSharedOrderGroups(
 	groups: SharedOrderGroup[],
-	changes: Array<{ from: string; to: string }>,
+	changes: OrderPathChange[],
+	folder?: OrderPathChange,
 ): SharedOrderGroup[] {
+	return changedOrderGroups(groups, remappedOrder(groups, changes, folder));
+}
+
+function remappedOrder(groups: SharedOrderGroup[], changes: OrderPathChange[], folder?: OrderPathChange): SharedOrderGroup[] {
 	const mapping = new Map(changes.map(({ from, to }) => [canonicalVaultPath(from), to]));
-	const remap = (path: string): string => mapping.get(canonicalVaultPath(path)) ?? path;
+	const remap = (path: string): string => {
+		if (folder && pathMatchesEntry(path, folder.from, true)) {
+			const suffix = path.split("/").slice(folder.from.split("/").length).join("/");
+			return `${folder.to}/${suffix}`;
+		}
+		return mapping.get(canonicalVaultPath(path)) ?? path;
+	};
 	const next = new Map(groups.map((group) => [groupKey(group.parent), group]));
 	for (const group of groups) {
 		// Empty old-parent tombstones must never replace an already renamed group on replay.
 		if (group.paths.length === 0) continue;
 		const parent = group.parent === null ? null : remap(group.parent);
-		const paths = [...new Map(group.paths.map((path) => {
-			const mapped = remap(path);
-			return [canonicalVaultPath(mapped), mapped];
-		})).values()];
+		const mapped = group.paths.map(remap);
+		// A previously deleted page may still have a rank under the destination name.
+		// When both names occur, the observed source owns the slot.
+		const destinations = new Set(mapped.filter((path, index) =>
+			canonicalVaultPath(path) !== canonicalVaultPath(group.paths[index]!)).map(canonicalVaultPath));
+		const unique = new Map<string, string>();
+		for (const [index, path] of mapped.entries()) {
+			const key = canonicalVaultPath(path);
+			if (key !== canonicalVaultPath(group.paths[index]!) || !destinations.has(key)) unique.set(key, path);
+		}
+		const paths = [...unique.values()];
 		if (groupKey(parent) === groupKey(group.parent) && samePaths(group.paths, paths)) continue;
 		if (groupKey(parent) !== groupKey(group.parent)) next.set(groupKey(group.parent), { parent: group.parent, paths: [] });
 		next.set(groupKey(parent), { parent, paths });
 	}
-	return changedOrderGroups(groups, [...next.values()]);
+	return [...next.values()];
 }
 
 function groupKey(parent: string | null): string {

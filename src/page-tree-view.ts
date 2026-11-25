@@ -40,6 +40,7 @@ let nextPanelId = 0;
 export interface PageTreeLoadInfo {
 	source: TreeLoadSource;
 	issueCount: number;
+	orderPending: boolean;
 }
 
 export type PageMoveDestination =
@@ -76,6 +77,7 @@ export class PageTreeView extends ItemView {
 	private pendingRevealFrame: number | null = null;
 	private pendingRefreshFrame: number | null = null;
 	private mode: PageTreeViewMode = "tree";
+	private revealWhenOrderSettles = false;
 	private readonly panelId = `page-tree-panel-${nextPanelId++}`;
 	private readonly scrollPositions = { tree: { top: 0, left: 0 }, recent: { top: 0, left: 0 } };
 
@@ -145,6 +147,14 @@ export class PageTreeView extends ItemView {
 	}
 
 	refresh(revealActiveFile = false): void {
+		const loadInfo = this.getLoadInfo();
+		// A native title edit can rename the note and its child folder in separate vault events.
+		if (this.mode === "tree" && loadInfo.orderPending) {
+			this.revealWhenOrderSettles ||= revealActiveFile;
+			return;
+		}
+		revealActiveFile ||= this.revealWhenOrderSettles;
+		this.revealWhenOrderSettles = false;
 		this.cancelPendingReveal();
 		const scrollTop = this.contentEl.scrollTop;
 		const scrollLeft = this.contentEl.scrollLeft;
@@ -164,7 +174,6 @@ export class PageTreeView extends ItemView {
 		const filesByPath = new Map(files.map((file) => [file.path, file]));
 		const state = this.treeStore.getState();
 		const projection = projectTree(state, files.map((file) => file.path));
-		const loadInfo = this.getLoadInfo();
 
 		const header = this.contentEl.createDiv({ cls: "page-tree-header" });
 		const toolbar = header.createDiv({ cls: "page-tree-toolbar" });

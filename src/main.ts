@@ -54,8 +54,8 @@ import { LEGACY_LOCAL_VIEW_STATE_KEY, LOCAL_VIEW_STATE_KEY, LocalViewState } fro
 import { guardPluginDataStorage } from "./persistence/plugin-data-lifecycle";
 import { LegacyPluginEnabledError, migrateLegacyPluginData } from "./persistence/legacy-plugin-migration";
 import {
-	applySharedOrder, captureOrderGroups, changedOrderGroups, isSharedOrderPath,
-	remapSharedOrderGroups, SHARED_ORDER_FOLDER, type SharedOrderGroup,
+	applySharedOrder, captureOrderGroups, changedOrderGroups, includeVisibleSiblings, isSharedOrderPath,
+	remapSharedOrderGroups, sharedOrderAfterTitleRename, SHARED_ORDER_FOLDER, type SharedOrderGroup,
 } from "./core/shared-order";
 import { ORDER_OUTBOX_KEY, SharedOrderSync } from "./persistence/shared-order-sync";
 
@@ -189,7 +189,7 @@ export default class PageTreePlugin extends Plugin {
 				return;
 			}
 			// Metadata always follows each observed event, never a coalesced future name.
-			this.queueOrderMaintenance(change);
+			this.queueOrderMaintenance(change, { from: oldPath, to: entry.path, folder: entry instanceof TFolder });
 			const pairingInternal = this.pairingRenames.some((scope) => scope.from === oldPath && scope.to === entry.path);
 			if (entry instanceof TFile && isManagedMarkdownPath(oldPath)
 				&& isManagedMarkdownPath(entry.path) && isNativeTitleRename(oldPath, entry.path)
@@ -205,6 +205,8 @@ export default class PageTreePlugin extends Plugin {
 						if (lineage.pending === 0 && this.pairedRenameSources.get(entry) === lineage) {
 							this.pairedRenameSources.delete(entry);
 						}
+						this.applyReceivedOrder();
+						this.refreshViews();
 					}
 				});
 			} else if (entry instanceof TFile && !pairingInternal) {
@@ -416,10 +418,10 @@ export default class PageTreePlugin extends Plugin {
 	): Promise<boolean> {
 		if (!this.canMutateTree()) return false;
 		return this.runMaintenanceAction(async () => {
+			const createdPaths: string[] = [];
 			try {
 				await this.treeMutations.whenIdle();
 				const initialAudit = auditPhysicalTree(this.getPhysicalTreeEntries(), this.treeStore.getState());
-				let createdPageCount = 0;
 				const approved = new Set(paths.map(canonicalVaultPath));
 				const candidates = initialAudit.missingPageBodyPaths.filter((path) => approved.has(canonicalVaultPath(path)));
 				let completed = 0;
@@ -430,15 +432,17 @@ export default class PageTreePlugin extends Plugin {
 						const before = this.getManagedMarkdownPaths();
 						await this.createPhysicalPage(pagePath);
 						await this.treeMutations.run((tree) => addPageOrder(tree, before, pagePath));
-						createdPageCount += 1;
+						createdPaths.push(pagePath);
 					}
 					completed += 1;
 					onProgress?.({ completed, total: candidates.length, currentPath: pagePath });
 				}
-				new Notice(this.strings.notices.parentPagesCreated(createdPageCount));
+				new Notice(this.strings.notices.parentPagesCreated(createdPaths.length));
 			} catch (error) {
 				new Notice(this.strings.notices.parentPagesCreateFailed);
 				throw error;
+			} finally {
+				await this.shareCreatedPageOrder(createdPaths);
 			}
 		});
 	}
@@ -498,16 +502,23 @@ export default class PageTreePlugin extends Plugin {
 		} while (pending !== this.pendingPageOperation);
 	}
 
-	private queueOrderMaintenance(change: VaultPathChange): void {
-		if (change.added.length + change.removed.length + change.changes.length === 0) return;
+	private queueOrderMaintenance(change: VaultPathChange, rename?: { from: string; to: string; folder: boolean }): void {
+		const folder = rename?.folder && !rename.to.split("/").some(part => part.startsWith(".")) ? rename : undefined;
+		if (change.added.length + change.removed.length + change.changes.length === 0 && !(folder && this.sharedOrder?.active)) return;
 		this.pendingOrderChanges += 1;
 		this.queuePageOperation(async () => {
 			try {
 				if (this.loadSource === "degraded") return;
-				await this.applyOrderChange(change);
-				if (this.sharedOrder?.active && change.changes.length > 0) {
-					await this.publishSharedOrder(remapSharedOrderGroups(this.sharedOrder.groups, change.changes));
+				let updates: SharedOrderGroup[] = [];
+				if (this.sharedOrder?.active && (change.changes.length > 0 || folder)) {
+					const title = !rename?.folder && change.changes.length === 1 ? change.changes[0] : undefined;
+					const shared = this.sharedOrder.groups;
+					updates = title && isNativeTitleRename(title.from, title.to)
+						? sharedOrderAfterTitleRename(shared, captureOrderGroups(this.treeStore.getState(), change.before), title)
+						: remapSharedOrderGroups(shared, change.changes, folder);
 				}
+				await this.applyOrderChange(change);
+				if (updates.length > 0) await this.publishSharedOrder(updates);
 				this.markCurrentStateLoaded();
 			} catch (error) {
 				console.error("PageTree could not save file-event order metadata", error);
@@ -538,6 +549,17 @@ export default class PageTreePlugin extends Plugin {
 		}
 	}
 
+	private async shareCreatedPageOrder(paths: string[]): Promise<void> {
+		if (paths.length === 0 || !this.sharedOrder?.active) return;
+		const created = new Set(paths.map(canonicalVaultPath));
+		const visible = captureOrderGroups(this.treeStore.getState(), this.getManagedMarkdownPaths())
+			.filter(group => group.paths.some(path => created.has(canonicalVaultPath(path))));
+		const shared = this.sharedOrder.groups;
+		// A genuinely new file can reuse a deleted page's name. Its old slot no longer applies.
+		const previous = shared.map(group => ({ ...group, paths: group.paths.filter(path => !created.has(canonicalVaultPath(path))) }));
+		await this.publishSharedOrder(changedOrderGroups(shared, includeVisibleSiblings(previous, visible)));
+	}
+
 	private async createUntitledPage(parentPath: string | null): Promise<void> {
 		if (!this.canMutateTree()) return;
 		const targetPath = nextUntitledPagePath(
@@ -551,6 +573,7 @@ export default class PageTreePlugin extends Plugin {
 			const file = await this.createPhysicalPage(targetPath);
 			try {
 				await this.treeMutations.run((tree) => addPageOrder(tree, before, file.path));
+				await this.shareCreatedPageOrder([file.path]);
 				this.markCurrentStateLoaded();
 				this.refreshViews();
 				const leaf = this.app.workspace.getLeaf(false);
@@ -677,11 +700,9 @@ export default class PageTreePlugin extends Plugin {
 				await this.createNativePageRenamer(file).synchronizeExternalRename(physicalSource, targetPath, async () => undefined);
 			}
 			lineage.source = targetPath;
-			this.refreshViews();
 		} catch (error) {
 			if (this.pairedRenameSources.get(file) === lineage) this.pairedRenameSources.delete(file);
 			console.error("PageTree failed to synchronize an Obsidian title rename", error);
-			this.refreshViews();
 			new Notice(createPageRenameErrorMessage(error, this.strings));
 		}
 	}
@@ -799,7 +820,7 @@ export default class PageTreePlugin extends Plugin {
 	}
 
 	private applyReceivedOrder(): void {
-		if (this.sharedOrder && this.loadSource !== "degraded" && !this.unloading && this.pendingOrderChanges === 0) {
+		if (this.sharedOrder && this.loadSource !== "degraded" && !this.unloading && !this.orderPending) {
 			applySharedOrder(this.treeStore, this.getManagedMarkdownPaths(), this.sharedOrder.groups);
 		}
 	}
@@ -849,10 +870,15 @@ export default class PageTreePlugin extends Plugin {
 		this.loadIssueCount = loadResult.issues.length;
 	}
 
+	private get orderPending(): boolean {
+		return this.pendingOrderChanges > 0 || this.pairedRenameSources.size > 0;
+	}
+
 	private getLoadInfo(): PageTreeLoadInfo {
 		return {
 			source: this.loadSource,
 			issueCount: this.loadIssueCount,
+			orderPending: this.orderPending,
 		};
 	}
 

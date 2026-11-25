@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import PageTreePlugin from "../src/main";
 import type { PageTreeViewActions } from "../src/page-tree-view";
 import type { ParentPageCreationProgress } from "../src/core/physical-tree-auditor";
-import { captureOrderGroups, isSharedOrderPath, SHARED_ORDER_FOLDER } from "../src/core/shared-order";
+import { captureOrderGroups, isSharedOrderPath, SHARED_ORDER_FOLDER, SHARED_ORDER_FORMAT, sharedOrderPath, type SharedOrderGroup } from "../src/core/shared-order";
 import type { TreeStore } from "../src/core/tree-store";
 
 const host = vi.hoisted(() => {
@@ -129,6 +129,8 @@ async function createHost() {
 			detachLeavesOfType: () => leaves.splice(0),
 			revealLeaf: vi.fn(async () => {}),
 			getLeftLeaf: vi.fn(() => null),
+			getLeaf: () => ({ openFile: async () => {} }),
+			getActiveFile: () => null,
 		},
 	};
 	const plugin = new PageTreePlugin(app as unknown as App, {} as PluginManifest);
@@ -276,7 +278,76 @@ async function transferOrder(from: HostFixture, to: HostFixture) {
 	await to.actions.checkPageTree();
 }
 
+async function seedSharedOrder(fixture: HostFixture, groups: SharedOrderGroup[]) {
+	const id = "00000000-0000-4000-8000-000000000001";
+	await fixture.app.vault.createFolder(SHARED_ORDER_FOLDER);
+	await fixture.app.vault.create(sharedOrderPath(id), JSON.stringify({ format: SHARED_ORDER_FORMAT, id, clock: 1, groups }));
+	await fixture.actions.checkPageTree();
+}
+
 describe("cross-device order integration", () => {
+	it("keeps an unranked page in its slot across a title rename, delayed file delivery and a fresh device", async () => {
+		const computer = await createHost();
+		const phone = await createHost();
+		const fresh = await createHost();
+		try {
+			for (const device of [computer, phone]) {
+				for (const path of ["A.md", "M.md", "Z.md"]) await device.app.vault.create(path, "\n");
+			}
+			await seedSharedOrder(computer, [{ parent: null, paths: ["Remote.md", "Project.md"] }]);
+			expect(visibleGroups(computer)[0]!.paths).toEqual(["Project.md", "A.md", "M.md", "Z.md"]);
+			await computer.app.fileManager.renameFile(computer.entries.get("M.md")!, "ZZ.md");
+			await computer.actions.checkPageTree();
+			const expected = ["Project.md", "A.md", "ZZ.md", "Z.md"];
+			expect(visibleGroups(computer)[0]!.paths).toEqual(expected);
+			await transferOrder(computer, phone);
+			const count = [...phone.contents.keys()].filter(isSharedOrderPath).length;
+			await phone.app.fileManager.renameFile(phone.entries.get("M.md")!, "ZZ.md");
+			await phone.actions.checkPageTree();
+			expect(visibleGroups(phone)[0]!.paths).toEqual(expected);
+			expect([...phone.contents.keys()].filter(isSharedOrderPath)).toHaveLength(count);
+			await transferOrder(computer, fresh);
+			for (const path of ["Z.md", "ZZ.md", "A.md", "Remote.md"]) await fresh.app.vault.create(path, "\n");
+			await fresh.actions.checkPageTree();
+			expect(visibleGroups(fresh)[0]!.paths).toEqual(["Remote.md", ...expected]);
+		} finally { computer.plugin.onunload(); phone.plugin.onunload(); fresh.plugin.onunload(); }
+	});
+
+	it("preserves local and undownloaded children when the parent and its folder are renamed", async () => {
+		const computer = await createHost();
+		const phone = await createHost();
+		try {
+			await computer.app.vault.create("Project/Z.md", "\n");
+			await seedSharedOrder(computer, [{ parent: null, paths: ["Project.md"] },
+				{ parent: "Project.md", paths: ["Project/Remote.md", "Project/Z.md"] }]);
+			await computer.app.fileManager.renameFile(computer.page, "Renamed.md");
+			await computer.actions.checkPageTree();
+			await phone.app.fileManager.renameFile(phone.page, "Renamed.md");
+			await phone.app.vault.create("Renamed/Remote.md", "\n");
+			await phone.app.vault.create("Renamed/Z.md", "\n");
+			await transferOrder(computer, phone);
+			expect(visibleGroups(phone).find(g => g.parent === "Renamed.md")?.paths)
+				.toEqual(["Renamed/Remote.md", "Renamed/Z.md", "Renamed/Child.md"]);
+		} finally { computer.plugin.onunload(); phone.plugin.onunload(); }
+	});
+
+	it.each([
+		{ ranks: ["Project.md"] },
+		{ ranks: ["Untitled.md", "Project.md"] },
+	])("appends a new PageTree page on both devices with initial ranks $ranks", async ({ ranks }) => {
+		const computer = await createHost();
+		const phone = await createHost();
+		try {
+			await computer.app.vault.create("Z.md", "\n");
+			await seedSharedOrder(computer, [{ parent: null, paths: ranks }]);
+			computer.actions.createRootPage();
+			await computer.actions.checkPageTree();
+			await transferOrder(computer, phone);
+			for (const path of ["Untitled.md", "Z.md"]) await phone.app.vault.create(path, "\n");
+			await phone.actions.checkPageTree();
+			expect(visibleGroups(phone)[0]!.paths).toEqual(["Project.md", "Z.md", "Untitled.md"]);
+		} finally { computer.plugin.onunload(); phone.plugin.onunload(); }
+	});
 	it("shares a desktop drag with another device automatically while keeping folds local", async () => {
 		const computer = await createHost();
 		const phone = await createHost();
